@@ -1,0 +1,18 @@
+Options {
+    n_threads: 8,
+    n_locks: 2,
+    n_ops: 10000,
+    n_rounds: 100,
+}
+
+std::sync::Mutex     avg 6.139163ms   min 432.7┬Ás      max 9.5066ms    
+parking_lot::Mutex   avg 7.478469ms   min 1.7306ms     max 9.9221ms    
+spin::Mutex          avg 8.444205ms   min 25.5┬Ás       max 18.6656ms   
+AmdSpinlock          avg 3.292888ms   min 19.9┬Ás       max 15.6595ms   
+TicketSpin           avg 20.501521ms  min 55.9┬Ás       max 43.0159ms   
+
+std::sync::Mutex     avg 5.356183ms   min 154.3┬Ás      max 9.1366ms    
+parking_lot::Mutex   avg 3.365789ms   min 493.2┬Ás      max 9.2826ms    
+spin::Mutex          avg 8.043681ms   min 157.2┬Ás      max 15.9082ms   
+AmdSpinlock          avg 8.530214ms   min 43.6┬Ás       max 15.54ms     
+TicketSpin           avg 19.486355ms  min 39.1┬Ás       max 44.2403ms   

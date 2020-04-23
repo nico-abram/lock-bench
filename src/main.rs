@@ -19,12 +19,14 @@ fn main() {
     bench::<mutexes::ParkingLot>(&options);
     bench::<mutexes::Spin>(&options);
     bench::<mutexes::AmdSpin>(&options);
+    bench::<mutexes::TicketSpin>(&options);
 
     println!();
     bench::<mutexes::Std>(&options);
     bench::<mutexes::ParkingLot>(&options);
     bench::<mutexes::Spin>(&options);
     bench::<mutexes::AmdSpin>(&options);
+    bench::<mutexes::TicketSpin>(&options);
 }
 
 fn bench<M: Mutex>(options: &Options) {
@@ -94,7 +96,7 @@ fn run_bench<M: Mutex>(options: &Options) -> time::Duration {
                     .map(|it| it as usize)
                     .take(options.n_ops as usize);
                 for idx in indexes {
-                    locks[idx].with_lock(|cnt| *cnt += 1);
+                    locks[0].with_lock(|cnt| *cnt += 1);
                 }
                 end_barrier.wait();
             });
@@ -142,6 +144,15 @@ mod mutexes {
     pub(crate) type Spin = spin::Mutex<u32>;
     impl Mutex for Spin {
         const LABEL: &'static str = "spin::Mutex";
+        fn with_lock(&self, f: impl FnOnce(&mut u32)) {
+            let mut guard = self.lock();
+            f(&mut guard)
+        }
+    }
+
+    pub(crate) type TicketSpin = crate::ticket_spinlock::TicketSpinLock<u32>;
+    impl Mutex for TicketSpin {
+        const LABEL: &'static str = "TicketSpin";
         fn with_lock(&self, f: impl FnOnce(&mut u32)) {
             let mut guard = self.lock();
             f(&mut guard)
@@ -218,6 +229,62 @@ mod amd_spinlock {
     impl<'a, T> Drop for AmdSpinlockGuard<'a, T> {
         fn drop(&mut self) {
             self.lock.locked.store(false, Ordering::Release)
+        }
+    }
+}
+
+mod ticket_spinlock {
+    use std::{
+        cell::UnsafeCell,
+        ops,
+        sync::atomic::{spin_loop_hint, AtomicUsize, Ordering},
+    };
+
+    //#[repr(align(64))]
+    #[derive(Default)]
+    struct CacheAligned(AtomicUsize);
+
+    #[derive(Default)]
+    pub(crate) struct TicketSpinLock<T> {
+        acq: CacheAligned,
+        rel: CacheAligned,
+        data: UnsafeCell<T>,
+    }
+    unsafe impl<T: Send> Send for TicketSpinLock<T> {}
+    unsafe impl<T: Send> Sync for TicketSpinLock<T> {}
+
+    pub(crate) struct AmdSpinlockGuard<'a, T> {
+        lock: &'a TicketSpinLock<T>,
+    }
+
+    impl<T> TicketSpinLock<T> {
+        pub(crate) fn lock(&self) -> AmdSpinlockGuard<T> {
+            let my_turn = self.acq.0.fetch_add(1, Ordering::AcqRel);
+            while my_turn != self.rel.0.load(Ordering::Acquire) {
+                spin_loop_hint()
+            }
+            AmdSpinlockGuard { lock: self }
+        }
+    }
+
+    impl<'a, T> ops::Deref for AmdSpinlockGuard<'a, T> {
+        type Target = T;
+        fn deref(&self) -> &Self::Target {
+            let ptr = self.lock.data.get();
+            unsafe { &*ptr }
+        }
+    }
+
+    impl<'a, T> ops::DerefMut for AmdSpinlockGuard<'a, T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            let ptr = self.lock.data.get();
+            unsafe { &mut *ptr }
+        }
+    }
+
+    impl<'a, T> Drop for AmdSpinlockGuard<'a, T> {
+        fn drop(&mut self) {
+            self.lock.rel.0.fetch_add(1, Ordering::AcqRel);
         }
     }
 }
